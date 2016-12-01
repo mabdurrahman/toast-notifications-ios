@@ -73,13 +73,19 @@ typedef enum {
 			 offsetTop:(NSInteger) top;
 - (iToast *) setGravity:(iToastGravity) gravity;
 - (iToast *) setPostion:(CGPoint) position;
+- (iToast *) setFontName:(NSString *) fontName;
 - (iToast *) setFontSize:(CGFloat) fontSize;
 - (iToast *) setUseShadow:(BOOL) useShadow;
 - (iToast *) setCornerRadius:(CGFloat) cornerRadius;
+- (iToast *) setBgColor:(UIColor*)bgColor;
 - (iToast *) setBgRed:(CGFloat) bgRed;
 - (iToast *) setBgGreen:(CGFloat) bgGreen;
 - (iToast *) setBgBlue:(CGFloat) bgBlue;
 - (iToast *) setBgAlpha:(CGFloat) bgAlpha;
+
+- (iToast *) setMinHeight:(CGFloat) minHeight;
+- (iToast *) setMarginTop:(CGFloat) marginTop;
+- (iToast *) setMarginBottom:(CGFloat) marginBottom;
 
 + (iToast *) makeText:(NSString *) text;
 
@@ -94,6 +100,7 @@ typedef enum {
 	iToastGravity gravity;
 	CGPoint postition;
 	iToastType toastType;
+    NSString *fontName;
 	CGFloat fontSize;
 	BOOL useShadow;
 	CGFloat cornerRadius;
@@ -103,6 +110,10 @@ typedef enum {
 	CGFloat bgAlpha;
 	NSInteger offsetLeft;
 	NSInteger offsetTop;
+    
+    CGFloat minHeight;
+    CGFloat marginTop;
+    CGFloat marginBottom;
 
 	NSDictionary *images;
 	
@@ -113,6 +124,7 @@ typedef enum {
 @property(assign) NSInteger duration;
 @property(assign) iToastGravity gravity;
 @property(assign) CGPoint postition;
+@property(retain) NSString *fontName;
 @property(assign) CGFloat fontSize;
 @property(assign) BOOL useShadow;
 @property(assign) CGFloat cornerRadius;
@@ -122,9 +134,13 @@ typedef enum {
 @property(assign) CGFloat bgAlpha;
 @property(assign) NSInteger offsetLeft;
 @property(assign) NSInteger offsetTop;
+
+@property(assign) CGFloat minHeight;
+@property(assign) CGFloat marginTop;
+@property(assign) CGFloat marginBottom;
+
 @property(readonly) NSDictionary *images;
 @property(assign) iToastImageLocation imageLocation;
-
 
 - (void) setImage:(UIImage *)img forType:(iToastType) type;
 - (void) setImage:(UIImage *)img withLocation:(iToastImageLocation)location forType:(iToastType)type;

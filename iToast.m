@@ -31,6 +31,8 @@ THE SOFTWARE.
 #import <QuartzCore/QuartzCore.h>
 
 #define CURRENT_TOAST_TAG 6984678
+#define CURRENT_TOAST_LABEL_TAG 6984679
+#define CURRENT_TOAST_IMAGE_TAG 6984680
 
 static const CGFloat kComponentPadding = 5;
 
@@ -38,242 +40,280 @@ static iToastSettings *sharedSettings = nil;
 
 @interface iToast(private)
 
-- (iToast *) settings;
+- (iToast *)settings;
 - (CGRect)_toastFrameForImageSize:(CGSize)imageSize withLocation:(iToastImageLocation)location andTextSize:(CGSize)textSize;
 - (CGRect)_frameForImage:(iToastType)type inToastFrame:(CGRect)toastFrame;
 
 @end
 
-
 @implementation iToast
 
-
-- (id) initWithText:(NSString *) tex{
-	if (self = [super init]) {
-		text = [tex copy];
-	}
-	
-	return self;
+- (id)initWithText:(NSString *)txt {
+    if (self = [super init]) {
+        text = [txt copy];
+    }
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(orientationChanged:) name:UIDeviceOrientationDidChangeNotification object:[UIDevice currentDevice]];
+    return self;
 }
 
-- (void) show{
-	[self show:iToastTypeNone];
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-- (void) show:(iToastType) type {
-	
-	iToastSettings *theSettings = _settings;
-	
-	if (!theSettings) {
-		theSettings = [iToastSettings getSharedSettings];
-	}
-	
-	UIImage *image = [theSettings.images valueForKey:[NSString stringWithFormat:@"%i", type]];
-	
-	UIFont *font = [UIFont systemFontOfSize:theSettings.fontSize];
+- (void)show {
+    [self show:iToastTypeNone];
+}
 
-    NSAttributedString *attributedText =[[NSAttributedString alloc] initWithString:text attributes:@{ NSFontAttributeName: font}];
-    CGRect rect = [attributedText boundingRectWithSize:CGSizeMake(280, 60)
-                                               options:NSStringDrawingUsesLineFragmentOrigin
-                                               context:nil];
-    CGSize textSize = rect.size;
-	
-	UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, textSize.width + kComponentPadding, textSize.height + kComponentPadding)];
-	label.backgroundColor = [UIColor clearColor];
-	label.textColor = [UIColor whiteColor];
-	label.font = font;
-	label.text = text;
-	label.numberOfLines = 0;
-	if (theSettings.useShadow) {
-		label.shadowColor = [UIColor darkGrayColor];
-		label.shadowOffset = CGSizeMake(1, 1);
-	}
-	
-	UIButton *v = [UIButton buttonWithType:UIButtonTypeCustom];
-	if (image) {
-		v.frame = [self _toastFrameForImageSize:image.size withLocation:[theSettings imageLocation] andTextSize:textSize];
-        
+- (void)show:(iToastType)type {
+    
+    iToastSettings *theSettings = _settings;
+    
+    if (!theSettings) {
+        theSettings = [iToastSettings getSharedSettings];
+    }
+    
+    UILabel *label = [self createLabel:theSettings];
+    
+    UIButton *v = [UIButton buttonWithType:UIButtonTypeCustom];
+    v.backgroundColor = [UIColor colorWithRed:theSettings.bgRed green:theSettings.bgGreen blue:theSettings.bgBlue alpha:theSettings.bgAlpha];
+    v.tag = CURRENT_TOAST_TAG;
+    
+    [v addSubview:label];
+    
+    UIImage *image = [theSettings.images valueForKey:[NSString stringWithFormat:@"%i", type]];
+    if (image) {
+        UIImageView *imageView = [[UIImageView alloc] initWithImage:image];
+        imageView.tag = CURRENT_TOAST_IMAGE_TAG;
+        [v addSubview:imageView];
+    }
+    
+    UIWindow *window = [[[UIApplication sharedApplication] windows] objectAtIndex:0];
+    
+    [self removePreviousToast];
+    [window addSubview:v];
+    
+    view = v;
+    [self adjustToast];
+    
+    v.alpha = 0;
+    [UIView beginAnimations:nil context:nil];
+    v.alpha = 1;
+    [UIView commitAnimations];
+    
+    if (timer && [timer isValid]) {
+        [timer invalidate];
+    }
+    timer = [NSTimer timerWithTimeInterval:((float)theSettings.duration) / 1000
+                                    target:self selector:@selector(removeToast:)
+                                  userInfo:nil repeats:NO];
+    [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSDefaultRunLoopMode];
+    [v addTarget:self action:@selector(removeToast:) forControlEvents:UIControlEventTouchDown];
+}
+
+- (UILabel *)createLabel:(iToastSettings *)toastSettings {
+    
+    UIFont *font = [self getFont:toastSettings];
+    
+    UILabel *label = [[UILabel alloc] init];
+    label.backgroundColor = [UIColor clearColor];
+    label.textColor = [UIColor whiteColor];
+    label.font = font;
+    label.text = text;
+    label.numberOfLines = 0;
+    [label setTextAlignment:NSTextAlignmentCenter];
+    if (toastSettings.useShadow) {
+        label.shadowColor = [UIColor darkGrayColor];
+        label.shadowOffset = CGSizeMake(1, 1);
+    }
+    label.tag = CURRENT_TOAST_LABEL_TAG;
+    
+    return label;
+}
+
+- (UIFont *)getFont:(iToastSettings *)toastSettings {
+    UIFont *font = nil;
+    
+    if (toastSettings.fontName) {
+        font = [UIFont fontWithName:toastSettings.fontName size:toastSettings.fontSize];
+    } else {
+        font = [UIFont systemFontOfSize:toastSettings.fontSize];
+    }
+    return font;
+}
+
+- (void)adjustToast {
+    if (view == nil || view.alpha == 0) {
+        return;
+    }
+    
+    UILabel* label = (UILabel*)[view viewWithTag:CURRENT_TOAST_LABEL_TAG];
+    if (label == nil) {
+        return;
+    }
+    
+    // imageView and image could be nil, but it's OK in Objective-C
+    UIImageView* imageView = (UIImageView*)[view viewWithTag:CURRENT_TOAST_IMAGE_TAG];
+    UIImage* image = imageView.image;
+    
+    UIView* v = view;
+    
+    iToastSettings *theSettings = _settings;
+    if (!theSettings) {
+        theSettings = [iToastSettings getSharedSettings];
+    }
+    
+    UIFont *font = [self getFont:theSettings];
+    
+    UIWindow *window = [[[UIApplication sharedApplication] windows] objectAtIndex:0];
+    
+    CGSize textSize = [self textSizeWithFont:font toastSettings:theSettings nextToImageView:image inWindowSize:window.frame.size];
+    
+    if (image) {
         switch ([theSettings imageLocation]) {
-            case iToastImageLocationLeft:
+            case iToastImageLocationLeft: {
+                v.frame = CGRectMake(0, 0, window.frame.size.width, textSize.height + kComponentPadding * 2);
+                
                 [label setTextAlignment:NSTextAlignmentLeft];
-                label.center = CGPointMake(image.size.width + kComponentPadding * 2 
-                                           + (v.frame.size.width - image.size.width - kComponentPadding * 2) / 2, 
+                label.center = CGPointMake(image.size.width + kComponentPadding * 2 + textSize.width / 2,
                                            v.frame.size.height / 2);
+                
+                imageView.frame = [self _getFrameForImage:image inToastFrame:v.frame];
+                
                 break;
-            case iToastImageLocationTop:
+            }
+            case iToastImageLocationTop: {
+                v.frame = CGRectMake(0, 0, window.frame.size.width, textSize.height + image.size.height + kComponentPadding * 3);
+                
                 [label setTextAlignment:NSTextAlignmentCenter];
-                label.center = CGPointMake(v.frame.size.width / 2, 
-                                           (image.size.height + kComponentPadding * 2 
-                                            + (v.frame.size.height - image.size.height - kComponentPadding * 2) / 2));
+                label.center = CGPointMake(v.frame.size.width / 2,
+                                           image.size.height + kComponentPadding * 2 + textSize.height / 2);
+                
+                imageView.frame = [self _getFrameForImage:image inToastFrame:v.frame];
+                
                 break;
+            }
             default:
                 break;
         }
-		
-	} else {
-		v.frame = CGRectMake(0, 0, textSize.width + kComponentPadding * 2, textSize.height + kComponentPadding * 2);
-		label.center = CGPointMake(v.frame.size.width / 2, v.frame.size.height / 2);
-	}
-	CGRect lbfrm = label.frame;
-	lbfrm.origin.x = ceil(lbfrm.origin.x);
-	lbfrm.origin.y = ceil(lbfrm.origin.y);
-	label.frame = lbfrm;
-	[v addSubview:label];
-	[label release];
-	
-	if (image) {
-		UIImageView *imageView = [[UIImageView alloc] initWithImage:image];
-		imageView.frame = [self _frameForImage:type inToastFrame:v.frame];
-		[v addSubview:imageView];
-		[imageView release];
-	}
-	
-	v.backgroundColor = [UIColor colorWithRed:theSettings.bgRed green:theSettings.bgGreen blue:theSettings.bgBlue alpha:theSettings.bgAlpha];
-	v.layer.cornerRadius = theSettings.cornerRadius;
-	
-	UIWindow *window = [[[UIApplication sharedApplication] windows] objectAtIndex:0];
-	
-	CGPoint point = CGPointZero;
-	
-	// Set correct orientation/location regarding device orientation
-	UIInterfaceOrientation orientation = (UIInterfaceOrientation)[[UIApplication sharedApplication] statusBarOrientation];
-	double version = [[[UIDevice currentDevice] systemVersion] doubleValue];
-	switch (orientation) {
-		case UIDeviceOrientationPortrait:
-		{
-			if (theSettings.gravity == iToastGravityTop) {
-				point = CGPointMake(window.frame.size.width / 2, 45);
-			} else if (theSettings.gravity == iToastGravityBottom) {
-				point = CGPointMake(window.frame.size.width / 2, window.frame.size.height - 45);
-			} else if (theSettings.gravity == iToastGravityCenter) {
-				point = CGPointMake(window.frame.size.width/2, window.frame.size.height/2);
-			} else {
-				point = theSettings.postition;
-			}
-			
-			point = CGPointMake(point.x + theSettings.offsetLeft, point.y + theSettings.offsetTop);
-			break;
-		}
-		case UIDeviceOrientationPortraitUpsideDown:
-		{
-			if (version < 8.0) {
-				v.transform = CGAffineTransformMakeRotation(M_PI);
-			}
-			
-			float width = window.frame.size.width;
-			float height = window.frame.size.height;
-			
-			if (theSettings.gravity == iToastGravityTop) {
-				point = CGPointMake(width / 2, height - 45);
-			} else if (theSettings.gravity == iToastGravityBottom) {
-				point = CGPointMake(width / 2, 45);
-			} else if (theSettings.gravity == iToastGravityCenter) {
-				point = CGPointMake(width/2, height/2);
-			} else {
-				// TODO : handle this case
-				point = theSettings.postition;
-			}
-			
-			point = CGPointMake(point.x - theSettings.offsetLeft, point.y - theSettings.offsetTop);
-			break;
-		}
-		case UIDeviceOrientationLandscapeLeft:
-		{
-			if (version < 8.0) {
-				v.transform = CGAffineTransformMakeRotation(M_PI/2); //rotation in radians
-			}
-			
-			if (theSettings.gravity == iToastGravityTop) {
-				point = CGPointMake(window.frame.size.width - 45, window.frame.size.height / 2);
-			} else if (theSettings.gravity == iToastGravityBottom) {
-				point = CGPointMake(45,window.frame.size.height / 2);
-			} else if (theSettings.gravity == iToastGravityCenter) {
-				point = CGPointMake(window.frame.size.width/2, window.frame.size.height/2);
-			} else {
-				// TODO : handle this case
-				point = theSettings.postition;
-			}
-			
-			point = CGPointMake(point.x - theSettings.offsetTop, point.y - theSettings.offsetLeft);
-			break;
-		}
-		case UIDeviceOrientationLandscapeRight:
-		{
-			if (version < 8.0) {
-				v.transform = CGAffineTransformMakeRotation(-M_PI/2);
-			}
-			
-			if (theSettings.gravity == iToastGravityTop) {
-				point = CGPointMake(45, window.frame.size.height / 2);
-			} else if (theSettings.gravity == iToastGravityBottom) {
-				point = CGPointMake(window.frame.size.width - 45, window.frame.size.height/2);
-			} else if (theSettings.gravity == iToastGravityCenter) {
-				point = CGPointMake(window.frame.size.width/2, window.frame.size.height/2);
-			} else {
-				// TODO : handle this case
-				point = theSettings.postition;
-			}
-			
-			point = CGPointMake(point.x + theSettings.offsetTop, point.y + theSettings.offsetLeft);
-			break;
-		}
-		default:
-			break;
-	}
+    } else {
+        v.frame = CGRectMake(0, 0, window.frame.size.width, textSize.height + kComponentPadding * 2);
+        
+        label.center = CGPointMake(v.frame.size.width / 2, v.frame.size.height / 2);
+    }
+    
+    CGPoint point = [self centerOfLabel:theSettings toastSize:v.frame.size windowSize:window.frame.size];
+    
+    v.center = point;
+    v.frame = CGRectIntegral(v.frame);
+    
+    CGRect lbfrm = CGRectMake(label.center.x - textSize.width / 2, label.center.y - textSize.height / 2, textSize.width, textSize.height);
+    lbfrm.origin.x = ceil(lbfrm.origin.x);
+    lbfrm.origin.y = ceil(lbfrm.origin.y);
+    label.frame = lbfrm;
+}
 
-	v.center = point;
-	v.frame = CGRectIntegral(v.frame);
-	
-	NSTimer *timer1 = [NSTimer timerWithTimeInterval:((float)theSettings.duration)/1000 
-											 target:self selector:@selector(hideToast:) 
-										   userInfo:nil repeats:NO];
-	[[NSRunLoop mainRunLoop] addTimer:timer1 forMode:NSDefaultRunLoopMode];
-	
-	v.tag = CURRENT_TOAST_TAG;
+- (CGSize)textSizeWithFont:(UIFont *)font toastSettings:(iToastSettings *)toastSettings nextToImageView:(UIImage *)image inWindowSize:(CGSize)windowSize {
+    CGSize textSize = CGSizeZero;
+    CGFloat maxTextWidth = windowSize.width - image.size.width - kComponentPadding * 3;
+    
+    if (image) {
+        switch ([toastSettings imageLocation]) {
+            case iToastImageLocationLeft: {
+                maxTextWidth = windowSize.width - image.size.width - kComponentPadding * 3;
+                
+                break;
+            }
+            case iToastImageLocationTop: {
+                maxTextWidth = windowSize.width - kComponentPadding * 2;
+                
+                break;
+            }
+            default:
+                break;
+        }
+    } else {
+        maxTextWidth = windowSize.width - image.size.width - kComponentPadding * 3;
+    }
+    
+    textSize = [text boundingRectWithSize:CGSizeMake(maxTextWidth, windowSize.height)
+                                  options:NSStringDrawingUsesLineFragmentOrigin
+                               attributes:@{NSFontAttributeName:font}
+                                  context:nil].size;
+    textSize.width = textSize.width > maxTextWidth? maxTextWidth : textSize.width;
+    textSize.height = textSize.height > toastSettings.minHeight? textSize.height : toastSettings.minHeight;
+    
+    return textSize;
+}
 
-	UIView *currentToast = [window viewWithTag:CURRENT_TOAST_TAG];
-	if (currentToast != nil) {
-    	[currentToast removeFromSuperview];
-	}
+- (CGPoint)centerOfLabel:(iToastSettings *)toastSettings toastSize:(CGSize)toastSize windowSize:(CGSize)windowSize {
+    CGPoint point;
+    
+    // don't need to set correct orientation/location regarding device orientation
+    // see commit logs to retrieve it if needed
+    
+    if (toastSettings.gravity == iToastGravityTop) {
+        point = CGPointMake(windowSize.width / 2, toastSettings.marginTop + toastSize.height / 2);
+    } else if (toastSettings.gravity == iToastGravityBottom) {
+        point = CGPointMake(windowSize.width / 2, windowSize.height - toastSettings.marginBottom - toastSize.height / 2);
+    } else if (toastSettings.gravity == iToastGravityCenter) {
+        point = CGPointMake(windowSize.width / 2, windowSize.height / 2);
+    } else {
+        point = toastSettings.postition;
+    }
+    point = CGPointMake(point.x + toastSettings.offsetLeft, point.y + toastSettings.offsetTop);
+    
+    return point;
+}
 
-	v.alpha = 0;
-	[window addSubview:v];
-	[UIView beginAnimations:nil context:nil];
-	v.alpha = 1;
-	[UIView commitAnimations];
-	
-	view = [v retain];
-	
-	[v addTarget:self action:@selector(hideToast:) forControlEvents:UIControlEventTouchDown];
+- (void)removePreviousToast {
+    UIWindow *window = [[[UIApplication sharedApplication] windows] objectAtIndex:0];
+    
+    UIView *currentToast = [window viewWithTag:CURRENT_TOAST_TAG];
+    if (currentToast != nil) {
+        // set the alpha to zero to avoid unnecessary adjust calculation when rotating
+        currentToast.alpha = 0;
+        [currentToast removeFromSuperview];
+    }
+}
+
+- (void)showToast:(UIView *)toastView {
+    
+    toastView.alpha = 0;
+    [UIView beginAnimations:nil context:nil];
+    toastView.alpha = 1;
+    [UIView commitAnimations];
+}
+
+- (void)orientationChanged:(NSNotification *)notification {
+    [self adjustToast];
 }
 
 - (CGRect)_toastFrameForImageSize:(CGSize)imageSize withLocation:(iToastImageLocation)location andTextSize:(CGSize)textSize {
     CGRect theRect = CGRectZero;
     switch (location) {
         case iToastImageLocationLeft:
-            theRect = CGRectMake(0, 0, 
-                                 imageSize.width + textSize.width + kComponentPadding * 3, 
+            theRect = CGRectMake(0, 0,
+                                 imageSize.width + textSize.width + kComponentPadding * 3,
                                  MAX(textSize.height, imageSize.height) + kComponentPadding * 2);
             break;
         case iToastImageLocationTop:
-            theRect = CGRectMake(0, 0, 
-                                 MAX(textSize.width, imageSize.width) + kComponentPadding * 2, 
+            theRect = CGRectMake(0, 0,
+                                 MAX(textSize.width, imageSize.width) + kComponentPadding * 2,
                                  imageSize.height + textSize.height + kComponentPadding * 3);
             
         default:
             break;
-    }    
+    }
     return theRect;
 }
 
-- (CGRect)_frameForImage:(iToastType)type inToastFrame:(CGRect)toastFrame {
+- (CGRect)_getFrameForImage:(UIImage *)image inToastFrame:(CGRect)toastFrame {
     iToastSettings *theSettings = _settings;
-    UIImage *image = [theSettings.images valueForKey:[NSString stringWithFormat:@"%i", type]];
     
     if (!image) return CGRectZero;
     
     CGRect imageFrame = CGRectZero;
-
+    
     switch ([theSettings imageLocation]) {
         case iToastImageLocationLeft:
             imageFrame = CGRectMake(kComponentPadding, (toastFrame.size.height - image.size.height) / 2, image.size.width, image.size.height);
@@ -290,96 +330,130 @@ static iToastSettings *sharedSettings = nil;
     
 }
 
-- (void) hideToast:(NSTimer*)theTimer{
-	[UIView beginAnimations:nil context:NULL];
-	view.alpha = 0;
-	[UIView commitAnimations];
-	
-	NSTimer *timer2 = [NSTimer timerWithTimeInterval:500 
-											 target:self selector:@selector(hideToast:) 
-										   userInfo:nil repeats:NO];
-	[[NSRunLoop mainRunLoop] addTimer:timer2 forMode:NSDefaultRunLoopMode];
+- (CGRect)_frameForImage:(iToastType)type inToastFrame:(CGRect)toastFrame {
+    iToastSettings *theSettings = _settings;
+    UIImage *image = [theSettings.images valueForKey:[NSString stringWithFormat:@"%i", type]];
+    
+    return [self _getFrameForImage:image inToastFrame:toastFrame];
 }
 
-- (void) removeToast:(NSTimer*)theTimer{
-	[view removeFromSuperview];
+- (void)hideToast:(NSTimer*)theTimer {
+    [UIView beginAnimations:nil context:NULL];
+    view.alpha = 0;
+    [UIView commitAnimations];
 }
 
-
-+ (iToast *) makeText:(NSString *) _text{
-	iToast *toast = [[[iToast alloc] initWithText:_text] autorelease];
-	
-	return toast;
-}
-
-
-- (iToast *) setDuration:(NSInteger ) duration{
-	[self theSettings].duration = duration;
-	return self;
-}
-
-- (iToast *) setGravity:(iToastGravity) gravity 
-			 offsetLeft:(NSInteger) left
-			  offsetTop:(NSInteger) top{
-	[self theSettings].gravity = gravity;
-	[self theSettings].offsetLeft = left;
-	[self theSettings].offsetTop = top;
-	return self;
-}
-
-- (iToast *) setGravity:(iToastGravity) gravity{
-	[self theSettings].gravity = gravity;
-	return self;
-}
-
-- (iToast *) setPostion:(CGPoint) _position{
-	[self theSettings].postition = CGPointMake(_position.x, _position.y);
-	
-	return self;
-}
-
-- (iToast *) setFontSize:(CGFloat) fontSize{
-	[self theSettings].fontSize = fontSize;
-	return self;
-}
-
-- (iToast *) setUseShadow:(BOOL) useShadow{
-	[self theSettings].useShadow = useShadow;
-	return self;
-}
-
-- (iToast *) setCornerRadius:(CGFloat) cornerRadius{
-	[self theSettings].cornerRadius = cornerRadius;
-	return self;
-}
-
-- (iToast *) setBgRed:(CGFloat) bgRed{
-	[self theSettings].bgRed = bgRed;
-	return self;
-}
-
-- (iToast *) setBgGreen:(CGFloat) bgGreen{
-	[self theSettings].bgGreen = bgGreen;
-	return self;
-}
-
-- (iToast *) setBgBlue:(CGFloat) bgBlue{
-	[self theSettings].bgBlue = bgBlue;
-	return self;
-}
-
-- (iToast *) setBgAlpha:(CGFloat) bgAlpha{
-	[self theSettings].bgAlpha = bgAlpha;
-	return self;
+- (void)removeToast:(NSTimer*)theTimer {
+    [view removeFromSuperview];
+    if (timer && [timer isValid]) {
+        [timer invalidate];
+    }
 }
 
 
--(iToastSettings *) theSettings{
-	if (!_settings) {
-		_settings = [[iToastSettings getSharedSettings] copy];
-	}
-	
-	return _settings;
++ (iToast *)makeText:(NSString *)txt {
+    iToast *toast = [[iToast alloc] initWithText:txt];
+    
+    return toast;
+}
+
+
+- (iToast *)setDuration:(NSInteger)duration {
+    [self theSettings].duration = duration;
+    return self;
+}
+
+- (iToast *)setGravity:(iToastGravity)gravity
+             offsetLeft:(NSInteger)left
+              offsetTop:(NSInteger)top {
+    [self theSettings].gravity = gravity;
+    [self theSettings].offsetLeft = left;
+    [self theSettings].offsetTop = top;
+    return self;
+}
+
+- (iToast *)setGravity:(iToastGravity)gravity {
+    [self theSettings].gravity = gravity;
+    return self;
+}
+
+- (iToast *)setPostion:(CGPoint)_position {
+    [self theSettings].postition = CGPointMake(_position.x, _position.y);
+    
+    return self;
+}
+
+- (iToast *)setFontName:(NSString *)fontName {
+    [self theSettings].fontName = fontName;
+    return self;
+}
+
+- (iToast *)setFontSize:(CGFloat)fontSize {
+    [self theSettings].fontSize = fontSize;
+    return self;
+}
+
+- (iToast *)setUseShadow:(BOOL)useShadow {
+    [self theSettings].useShadow = useShadow;
+    return self;
+}
+
+- (iToast *)setCornerRadius:(CGFloat)cornerRadius {
+    [self theSettings].cornerRadius = cornerRadius;
+    return self;
+}
+
+- (iToast *)setBgColor:(UIColor*)bgColor {
+    CGFloat red, green, blue, alpha;
+    [bgColor getRed:&red green:&green blue:&blue alpha:&alpha];
+    [self setBgRed:red];
+    [self setBgGreen:green];
+    [self setBgBlue:blue];
+    [self setBgAlpha:alpha];
+    return self;
+}
+
+- (iToast *)setBgRed:(CGFloat)bgRed {
+    [self theSettings].bgRed = bgRed;
+    return self;
+}
+
+- (iToast *)setBgGreen:(CGFloat)bgGreen {
+    [self theSettings].bgGreen = bgGreen;
+    return self;
+}
+
+- (iToast *)setBgBlue:(CGFloat)bgBlue {
+    [self theSettings].bgBlue = bgBlue;
+    return self;
+}
+
+- (iToast *)setBgAlpha:(CGFloat)bgAlpha {
+    [self theSettings].bgAlpha = bgAlpha;
+    return self;
+}
+
+- (iToast *)setMinHeight:(CGFloat)minHeight {
+    [self theSettings].minHeight = minHeight;
+    return self;
+}
+
+- (iToast *)setMarginTop:(CGFloat)marginTop {
+    [self theSettings].marginTop = marginTop;
+    return self;
+}
+
+- (iToast *)setMarginBottom:(CGFloat)marginBottom {
+    [self theSettings].marginBottom = marginBottom;
+    return self;
+}
+
+- (iToastSettings *)theSettings {
+    if (!_settings) {
+        _settings = [[iToastSettings getSharedSettings] copy];
+    }
+    
+    return _settings;
 }
 
 @end
@@ -391,6 +465,7 @@ static iToastSettings *sharedSettings = nil;
 @synthesize duration;
 @synthesize gravity;
 @synthesize postition;
+@synthesize fontName;
 @synthesize fontSize;
 @synthesize useShadow;
 @synthesize cornerRadius;
@@ -401,20 +476,24 @@ static iToastSettings *sharedSettings = nil;
 @synthesize images;
 @synthesize imageLocation;
 
-- (void) setImage:(UIImage *) img withLocation:(iToastImageLocation)location forType:(iToastType) type {
-	if (type == iToastTypeNone) {
-		// This should not be used, internal use only (to force no image)
-		return;
-	}
-	
-	if (!images) {
-		images = [[NSMutableDictionary alloc] initWithCapacity:4];
-	}
-	
-	if (img) {
-		NSString *key = [NSString stringWithFormat:@"%i", type];
-		[images setValue:img forKey:key];
-	}
+@synthesize minHeight;
+@synthesize marginTop;
+@synthesize marginBottom;
+
+- (void)setImage:(UIImage *)img withLocation:(iToastImageLocation)location forType:(iToastType)type {
+    if (type == iToastTypeNone) {
+        // This should not be used, internal use only (to force no image)
+        return;
+    }
+    
+    if (!images) {
+        images = [[NSMutableDictionary alloc] initWithCapacity:4];
+    }
+    
+    if (img) {
+        NSString *key = [NSString stringWithFormat:@"%i", type];
+        [images setValue:img forKey:key];
+    }
     
     [self setImageLocation:location];
 }
@@ -424,50 +503,58 @@ static iToastSettings *sharedSettings = nil;
 }
 
 
-+ (iToastSettings *) getSharedSettings{
-	if (!sharedSettings) {
-		sharedSettings = [iToastSettings new];
-		sharedSettings.gravity = iToastGravityCenter;
-		sharedSettings.duration = iToastDurationShort;
-		sharedSettings.fontSize = 16.0;
-		sharedSettings.useShadow = YES;
-		sharedSettings.cornerRadius = 5.0;
-		sharedSettings.bgRed = 0;
-		sharedSettings.bgGreen = 0;
-		sharedSettings.bgBlue = 0;
-		sharedSettings.bgAlpha = 0.7;
-		sharedSettings.offsetLeft = 0;
-		sharedSettings.offsetTop = 0;
-	}
-	
-	return sharedSettings;
-	
++ (iToastSettings *)getSharedSettings {
+    if (!sharedSettings) {
+        sharedSettings = [iToastSettings new];
+        sharedSettings.gravity = iToastGravityCenter;
+        sharedSettings.duration = iToastDurationShort;
+        sharedSettings.fontName = nil;
+        sharedSettings.fontSize = 16.0;
+        sharedSettings.useShadow = YES;
+        sharedSettings.cornerRadius = 5.0;
+        sharedSettings.bgRed = 0;
+        sharedSettings.bgGreen = 0;
+        sharedSettings.bgBlue = 0;
+        sharedSettings.bgAlpha = 0.7;
+        sharedSettings.offsetLeft = 0;
+        sharedSettings.offsetTop = 0;
+        sharedSettings.minHeight = 0;
+        sharedSettings.marginTop = 0;
+        sharedSettings.marginBottom = 0;
+    }
+    
+    return sharedSettings;
+    
 }
 
-- (id) copyWithZone:(NSZone *)zone{
-	iToastSettings *copy = [iToastSettings new];
-	copy.gravity = self.gravity;
-	copy.duration = self.duration;
-	copy.postition = self.postition;
-	copy.fontSize = self.fontSize;
-	copy.useShadow = self.useShadow;
-	copy.cornerRadius = self.cornerRadius;
-	copy.bgRed = self.bgRed;
-	copy.bgGreen = self.bgGreen;
-	copy.bgBlue = self.bgBlue;
-	copy.bgAlpha = self.bgAlpha;
-	copy.offsetLeft = self.offsetLeft;
-	copy.offsetTop = self.offsetTop;
-	
-	NSArray *keys = [self.images allKeys];
-	
-	for (NSString *key in keys){
-		[copy setImage:[images valueForKey:key] forType:[key intValue]];
-	}
+- (id)copyWithZone:(NSZone *)zone {
+    iToastSettings *copy = [iToastSettings new];
+    copy.gravity = self.gravity;
+    copy.duration = self.duration;
+    copy.postition = self.postition;
+    copy.fontName = self.fontName;
+    copy.fontSize = self.fontSize;
+    copy.useShadow = self.useShadow;
+    copy.cornerRadius = self.cornerRadius;
+    copy.bgRed = self.bgRed;
+    copy.bgGreen = self.bgGreen;
+    copy.bgBlue = self.bgBlue;
+    copy.bgAlpha = self.bgAlpha;
+    copy.offsetLeft = self.offsetLeft;
+    copy.offsetTop = self.offsetTop;
+    copy.minHeight = self.minHeight;
+    copy.marginTop = self.marginTop;
+    copy.marginBottom = self.marginBottom;
+    
+    NSArray *keys = [self.images allKeys];
+    
+    for (NSString *key in keys) {
+        [copy setImage:[images valueForKey:key] forType:[key intValue]];
+    }
     
     [copy setImageLocation:imageLocation];
-	
-	return copy;
+    
+    return copy;
 }
 
 @end
